@@ -1,0 +1,3 @@
+cc -std=c99 -O3 fs_eval.c fieldtest.c -lm -o fieldtest
+./fieldtest
+python bpmeth_output.py
