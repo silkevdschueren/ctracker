@@ -18,6 +18,7 @@ int main(void) {
     a[2 * (deg + 1) + 0] = 0.3;  /* a_3 s^0 */
     b[0 * (deg + 1) + 0] = 1.0;  /* b_1 s^0 */
     b[1 * (deg + 1) + 0] = 0.1;  /* b_2 s^0 */
+    bs[0] = 0.1;  /* b_s s^0 */
     const double h = 0.2;
     const double x = 0.01, y = 0.1, s = 0;
 
