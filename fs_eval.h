@@ -25,8 +25,10 @@ typedef struct {
 } FSValue;
 
 /* API */
-FSField *fs_build(double h, int ny, int na, int nb, int deg,
-                  const double *a, const double *b);
+FSField *fs_build(double h, int ny, int na, int nb, int deg, 
+                  const double *bs,
+                  const double *a, 
+                  const double *b);
 
 int fs_eval(FSField *f, double x, double y, double s, FSValue *out);
 

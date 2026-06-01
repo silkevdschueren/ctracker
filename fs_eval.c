@@ -10,8 +10,9 @@
       B = -grad(phi) = -(d_x phi, d_y phi, (1/q) d_s phi),  q = 1 + h x.
 
   Input polynomial layout:
-      a[n*(deg+1) + k] = coeff of s^k in a_n(s),   n = 0..na
-      b[n*(deg+1) + k] = coeff of s^k in b_n(s),   n = 0..nb   (b[0] ignored)
+      bs[k] = coefficient of s^k in b_s(s) = a_0'(s), k=0..deg.
+      a[(n-1)*(deg+1)+k] = coefficient of s^k in a_n(s), n=1..na.
+      b[(n-1)*(deg+1)+k] = coefficient of s^k in b_n(s), n=1..nb.
 
   The builder stores enough y-coefficients to evaluate Phi, B and A through
   order ny in y, with B_y also accurate through order ny.
@@ -83,7 +84,9 @@ static inline void poly_eval_d1(const double *p, int deg, double s, double *v, d
 :int deg: degree of the polynomials describing a, b
 :const double *a, *b: pointers to the first element of a, b polynomial coefficients */
 FSField *fs_build(double h, int ny, int na, int nb, int deg,
-                  const double *a, const double *b) {
+                  const double *bs,
+                  const double *a, 
+                  const double *b) {
     if (h == 0.0) {
         fprintf(stderr, "fs_build: h=0 needs the Cartesian limit; this evaluator assumes h != 0.\n");
         return NULL;
@@ -117,19 +120,27 @@ FSField *fs_build(double h, int ny, int na, int nb, int deg,
         invhpow[n] = invhpow[n - 1] / h;
     }
 
-    /* phi_0(s) = sum_m c[0,m](s) q^m 
-    c[0,m] = - sum_(n>=m) (-1)^(n-m) / (h^n m! (n-m)!) a_n(s) */
+    /* phi_0(s) = sum_m c[0,m](s) q^m
+    c[0,m] = - sum_(n>=m) (-1)^(n-m) / (h^n m! (n-m)!) a_n(s) 
+    */
     for (int m = 0; m <= na; ++m) {
         double *dst = cptr(f, 0, m + f->moff);
-        for (int n = m; n <= na; ++n) {
+        /* a_0(s)=int_0^s b_s(u)du contributes -a_0 to phi_0. 
+        CAREFUL: this will neglect the highest order in the polynomial, 
+        only up to given degree in a0 is kept */
+        if (m==0) {
+        for (int k = 0; k < deg; ++k)
+            dst[k + 1] = bs[k] / (double)(k + 1);
+        }
+        for (int n = (m > 1 ? m : 1); n <= na; ++n) {
             double sgn = ((n - m) & 1) ? -1.0 : 1.0;
             double fac = -sgn * invhpow[n] * invfact[m] * invfact[n - m];
-            const double *an = a + (size_t)n * (size_t)(deg + 1);
+            const double *an = a + (size_t)(n - 1) * (size_t)(deg + 1);
             for (int k = 0; k <= deg; ++k) dst[k] += fac * an[k];
         }
     }
     
-    /* phi_1(q,s) = sum_m c[1,m](s) q^m 
+    /* phi_1(q,s) = sum_m c[1,m](s) q^m
     c[1,m] = - sum_(n>=m+1) (-1)^(n-1-m) / (h^(n-1) m! (n-1-m)!) b_n(s) */
     if (f->ncoef > 1) {
         for (int m = 0; m <= nb - 1; ++m) {
@@ -137,7 +148,7 @@ FSField *fs_build(double h, int ny, int na, int nb, int deg,
             for (int n = m + 1; n <= nb; ++n) {
                 double sgn = ((n - 1 - m) & 1) ? -1.0 : 1.0;
                 double fac = -sgn * invhpow[n - 1] * invfact[m] * invfact[n - 1 - m];
-                const double *bn = b + (size_t)n * (size_t)(deg + 1);
+                const double *bn = b + (size_t)(n - 1) * (size_t)(deg + 1);
                 for (int k = 0; k <= deg; ++k) dst[k] += fac * bn[k];
             }
         }
