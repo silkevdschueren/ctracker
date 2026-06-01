@@ -5,10 +5,11 @@
 
 int main(void) {
     /* Example: a_0(s)=0, a_1(s)=1, others 0; b_n=0. */
-    const int deg = 2, na = 3, nb = 2, ny = 6;
+    const int deg = 1, na = 3, nb = 2, ny = 6;
     double bs[deg + 1];
-    double a[na + 1 * (deg + 1)];
-    double b[nb + 1 * (deg + 1)];
+    double a[na * (deg + 1)];
+    double b[nb * (deg + 1)];
+    memset(bs, 0, sizeof(bs));
     memset(a, 0, sizeof(a));
     memset(b, 0, sizeof(b));
     a[0 * (deg + 1) + 0] = 1.0;  /* a_1 s^0 */
