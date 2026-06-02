@@ -18,6 +18,11 @@
   order ny in y, with B_y also accurate through order ny.
 */
 
+#define FS_DELTA_RELATIVISTIC 0
+#define FS_DELTA_EQUALS_PTAU 1
+
+/* -- STRUCTS -- */
+
 /* Keeps recursion relation coefficients c[i,m,k] and their relevant quantities */
 typedef struct {
     int ny;      /* requested output order in y */
@@ -28,7 +33,8 @@ typedef struct {
     double h;
     double *c;   /* c[i,m,k], polynomial coeff of s^k in q^m term */
     double *V;   /* scratch: c[i,m](s)   */
-    double *D;   /* scratch: d_s c[i,m]  */
+    double *D1;   /* scratch: d_s c[i,m]  */
+    double *D2;   /* scratch: d2_s c[i,m]  */
     double *Q;   /* scratch: q^e, e=qemin.. */
 } FSField;
 
@@ -37,7 +43,29 @@ typedef struct {
     double phi;
     double Bx, By, Bs;
     double Ax, Ay, As;
+    double dAx_dx, dAx_dy, dAx_ds;
+    double dAs_dx, dAs_dy, dAs_ds;
 } FSValue;
+
+typedef struct {
+    double beta0;
+    int delta_mode;
+} FSHamiltonianParams;
+
+typedef struct {
+    double H;
+    double delta;
+    double one_plus_delta;
+    double radicand;
+    double root;
+    double grad[6];  /* dH/d{x,px,y,py,tau,ptau} */
+    double rhs[6];   /* canonical flow dz/ds */
+    double dH_ds;    /* explicit derivative at fixed canonical variables */
+    FSValue pot;
+} FSHamiltonianFlow;
+
+
+/* -- HELPER FUNCTIONS -- */
 
 static void *xcalloc(size_t n, size_t sz) {
     void *p = calloc(n, sz);
@@ -67,15 +95,20 @@ static inline const double *ccptr(const FSField *f, int i, int j) {
 :double s: the point at which to evaluate the polynomial and its derivative
 :double *v: pointer where the value of the polynomial at s will be stored
 :double *dv: pointer where the value of the derivative of the polynomial at s will be stored */
-static inline void poly_eval_d1(const double *p, int deg, double s, double *v, double *dv) {
-    double a = p[deg], b = 0.0;
+static inline void poly_eval_d2(const double *p, int deg, double s, double *v, double *d1, double *d2) {
+    double a = p[deg], b = 0.0, c=0.0;
     for (int k = deg - 1; k >= 0; --k) {
+        c = c * s + 2.0 * b;
         b = b * s + a;
         a = a * s + p[k];
     }
     *v = a;
-    *dv = b;
+    *d1 = b;
+    *d2 = c;
 }
+
+
+/* -- FIELD EXPANSION EVALUATION -- */
 
 /* Will return a pointer to an FSField struct 
 :double h: curvature
@@ -107,7 +140,8 @@ FSField *fs_build(double h, int ny, int na, int nb, int deg,
     f->nq = (f->mmax + 2) - f->qemin + 1;
     f->c = (double *)xcalloc((size_t)f->ncoef * (size_t)f->nm * (size_t)(deg + 1), sizeof(double));
     f->V = (double *)xcalloc((size_t)f->ncoef * (size_t)f->nm, sizeof(double));
-    f->D = (double *)xcalloc((size_t)f->ncoef * (size_t)f->nm, sizeof(double));
+    f->D1 = (double *)xcalloc((size_t)f->ncoef * (size_t)f->nm, sizeof(double));
+    f->D2 = (double *)xcalloc((size_t)f->ncoef * (size_t)f->nm, sizeof(double));
     f->Q = (double *)xcalloc((size_t)f->nq, sizeof(double));
 
     int nmax = (na > nb) ? na : nb;
@@ -180,7 +214,8 @@ void fs_free(FSField *f) {
     if (!f) return;
     free(f->c);
     free(f->V);
-    free(f->D);
+    free(f->D1);
+    free(f->D2);
     free(f->Q);
     free(f);
 }
@@ -190,9 +225,10 @@ and keep them in V, D */
 static void fs_prepare_s(FSField *f, double s) {
     for (int i = 0; i < f->ncoef; ++i) {
         for (int j = 0; j < f->nm; ++j) {
-            poly_eval_d1(ccptr(f, i, j), f->deg, s,
+            poly_eval_d2(ccptr(f, i, j), f->deg, s,
                          &f->V[i * f->nm + j],
-                         &f->D[i * f->nm + j]);
+                         &f->D1[i * f->nm + j],
+                         &f->D2[i * f->nm + j]);
         }
     }
 }
@@ -211,7 +247,8 @@ int fs_eval(FSField *f, double x, double y, double s, FSValue *out) {
 
     const int nv = f->ncoef * f->nm;
     double *V = f->V;
-    double *D = f->D;
+    double *D1 = f->D1;
+    double *D2 = f->D2;
     double *Q = f->Q;
 
     fs_prepare_s(f, s);
@@ -235,27 +272,44 @@ int fs_eval(FSField *f, double x, double y, double s, FSValue *out) {
 
     double t = 1.0; /* y^i / i! */
     for (int i = 0; i <= f->ny; ++i) {
-        double sphi = 0.0, sbx = 0.0, sbs = 0.0, sby = 0.0;
+        double sphi = 0.0, gx = 0.0, gs = 0.0, gy = 0.0;
+        double dgx_dx = 0.0, dgx_ds = 0.0;
+        double dgs_dx = 0.0, dgs_ds = 0.0;
+
         for (int m = f->mmin; m <= f->mmax; ++m) {
             const int j = m + f->moff;
-            const double v = V[i * f->nm + j];  /* c[i,m]' */
-            const double ds = D[i * f->nm + j]; /* c[i,m] */
-            sphi += v * QPOW(m);                        /* c[i,m] q^m */
-            sbx  += f->h * (double)m * v * QPOW(m - 1); /* h m c[i,m] q^(m-1) */
-            sby  += V[(i + 1) * f->nm + j] * QPOW(m);   /* c[i+1,m] q^m */
-            sbs  += ds * QPOW(m - 1);                   /* c[i,m]' q^(m-1) */
+            const double v = V[i * f->nm + j];      /* c[i,m]' */
+            const double d1 = D1[i * f->nm + j];    /* c[i,m] */
+            const double d2 = D2[i * f->nm + j];    /* c[i,m] */
+            const double qm = QPOW(m);              /* q^m */
+            const double qm1 = QPOW(m - 1);         /* q^(m-1) */
+            const double qm2 = QPOW(m - 2);         /* q^(m-2) */
+
+            sphi += v * qm;                         /* c[i,m] q^m */
+            gx   += f->h * (double)m * v * qm1;     /* h m c[i,m] q^(m-1) */
+            gy   += V[(i + 1) * f->nm + j] * qm;    /* c[i+1,m] q^m */
+            gs   += d1 * qm1;                       /* c[i,m]' q^(m-1) */
+
+            dgx_dx += f->h * f->h * (double)m * (double)(m-1) * v * qm2;
+            dgx_ds += f->h * (double)m * d1 * qm1;
+            dgs_dx += f->h * (double)(m-1) * d1 * qm2;
+            dgs_ds += d2 * qm1;
         }
 
         out->phi += sphi * t;  /* c[i,m] q^m y^i/i!*/
-        out->Bx  -= sbx  * t;  /* -h m c[i,m] q^(m-1) y^i/i! */
-        out->By  -= sby  * t;  /* -c[i+1,m] q^m y^i/i! */
-        out->Bs  -= sbs  * t;  /* -c[i,m]' q^(m-1) y^i/i! */
+        out->Bx  -= gx   * t;  /* -h m c[i,m] q^(m-1) y^i/i! */
+        out->By  -= gy   * t;  /* -c[i+1,m] q^m y^i/i! */
+        out->Bs  -= gs   * t;  /* -c[i,m]' q^(m-1) y^i/i! */
 
         /* A_x, A_s through order ny in y: need i = 0..ny-1 */
         if (i < f->ny) {
             double u = t * y / (double)(i + 1);  /* y^(i+1)/(i+1)! */
-            out->Ax += sbs * u;  /* -c[i,m]' q^(m-1) y^(i+1)/(i+1)! */
-            out->As -= sbx * u;  /* -h m c[i,m] q^(m-1) y^i/i! *//* -h m c[i,m] q^(m-1) y^i/i! */
+            out->Ax += gs * u;  /* -c[i,m]' q^(m-1) y^(i+1)/(i+1)! */
+            out->As -= gx * u;  /* -h m c[i,m] q^(m-1) y^i/i! *//* -h m c[i,m] q^(m-1) y^i/i! */
+            out->dAx_dx += dgs_dx  * u;
+            out->dAx_ds += dgs_ds  * u;
+            out->dAs_dx += -dgx_dx * u;
+            out->dAs_ds += -dgx_ds * u;
         }
 
         t *= y / (double)(i + 1);
@@ -263,5 +317,78 @@ int fs_eval(FSField *f, double x, double y, double s, FSValue *out) {
 
     (void)nv;
     return 0;
+#undef QPOW
 }
 
+
+/* -- HAMILTONIAN -- */
+
+void fs_hamiltonian_params_default(FSHamiltonianParams *p, double beta0) {
+    if (!p) return;
+    p->beta0 = beta0;
+    p->delta_mode = FS_DELTA_RELATIVISTIC;
+}
+
+static FSHamiltonianParams fs_params_value(const FSHamiltonianParams *p) {
+    FSHamiltonianParams q;
+    fs_hamiltonian_params_default(&q, 1.0);
+    if (p) q = *p;
+    if (!(q.beta0 > 0.0)) q.beta0 = 1.0;
+    return q;
+}
+
+static int fs_delta_from_ptau(const FSHamiltonianParams *params, double ptau,
+                              double *delta, double *gamma, double *dgamma) {
+    if (params->delta_mode == FS_DELTA_EQUALS_PTAU) {
+        *delta = ptau;
+        *gamma = 1.0 + ptau;
+        *dgamma = 1.0;
+    }{
+        const double r = 1.0 + 2.0 * ptau / params->beta0 + ptau * ptau;
+        *gamma = sqrt(r);
+        *delta = *gamma - 1.0;
+        *dgamma = (1.0 / params->beta0 + ptau) / (*gamma);
+    }
+}
+
+
+int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
+                        double s, const double z[6], FSHamiltonianFlow *flow) {
+    FSHamiltonianParams params = fs_params_value(params_in);
+    double gamma, delta, dgamma;
+    double q, pix, piy, rad, root;
+
+    memset(flow, 0, sizeof(*flow));
+
+    fs_eval(f, z[0], z[2], s, &flow->pot);
+    fs_delta_from_ptau(&params, z[5], &delta, &gamma, &dgamma);
+
+    q = 1.0 + f->h * z[0];
+    pix = z[1] - flow->pot.Ax;
+    piy = z[3] - flow->pot.Ay;  /* A_y is zero in this gauge. */
+    rad = gamma * gamma - pix * pix - piy * piy;
+    root = sqrt(rad);
+
+    flow->delta = delta;
+    flow->one_plus_delta = gamma;
+    flow->radicand = rad;
+    flow->root = root;
+    flow->H = z[5] / params.beta0 - q * (root + flow->pot.As);
+
+    flow->rhs[0] = q * pix / root;
+    flow->rhs[2] = q * piy / root;
+    flow->rhs[4] = 1.0 / params.beta0 - q * gamma * dgamma / root;
+
+    flow->rhs[1] = f->h * (root + flow->pot.As)
+        + q * (pix * flow->pot.dAx_dx / root + flow->pot.dAs_dx);
+    flow->rhs[3] = q * (pix * flow->pot.dAx_dy / root + flow->pot.dAs_dy);
+    flow->rhs[5] = 0.0;  /* H has no tau-dependence for these static fields. */
+
+    flow->grad[0] = -flow->rhs[1];
+    flow->grad[1] =  flow->rhs[0];
+    flow->grad[2] = -flow->rhs[3];
+    flow->grad[3] =  flow->rhs[2];
+    flow->grad[4] = -flow->rhs[5];
+    flow->grad[5] =  flow->rhs[4];
+    flow->dH_ds = -q * (pix * flow->pot.dAx_ds / root + flow->pot.dAs_ds);
+}
