@@ -185,6 +185,18 @@ void fs_free(FSField *f) {
     free(f);
 }
 
+/* Evaluate all c[i,m](s) and d_s c[i,m](s)
+and keep them in V, D */
+static void fs_prepare_s(FSField *f, double s) {
+    for (int i = 0; i < f->ncoef; ++i) {
+        for (int j = 0; j < f->nm; ++j) {
+            poly_eval_d1(ccptr(f, i, j), f->deg, s,
+                         &f->V[i * f->nm + j],
+                         &f->D[i * f->nm + j]);
+        }
+    }
+}
+
 /* Evaluate fields
 :FSField *f: pointer to field to evaluate
 :double x, y, s: positions at which to evaluate field
@@ -202,14 +214,7 @@ int fs_eval(FSField *f, double x, double y, double s, FSValue *out) {
     double *D = f->D;
     double *Q = f->Q;
 
-    /* Evaluate all c[i,m](s) and d_s c[i,m](s)
-    and keep them in V, D */
-    for (int i = 0; i < f->ncoef; ++i) {
-        for (int j = 0; j < f->nm; ++j) {
-            poly_eval_d1(ccptr(f, i, j), f->deg, s,
-                         &V[i * f->nm + j], &D[i * f->nm + j]);
-        }
-    }
+    fs_prepare_s(f, s);
 
     /* q powers from e = mmin-1 .. mmax+2 */
     Q[0] = pow(q, (double)f->qemin);
