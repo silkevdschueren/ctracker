@@ -55,6 +55,19 @@ int main(void) {
     printf("dH/dptau = %.15g\n", flow.grad[5]);
     
 
+    double ds = 1e-3;
+    int nstep = 100;
+    double zz[6] = {1e-3,0,0,0,0,0};
+
+    fs_track_euler(f, &hp, zz, 0, ds, nstep);
+
+    printf("x    = %.15e\n", zz[0]);
+    printf("px   = %.15e\n", zz[1]);
+    printf("y    = %.15e\n", zz[2]);
+    printf("py   = %.15e\n", zz[3]);
+    printf("tau  = %.15e\n", zz[4]);
+    printf("ptau = %.15e\n", zz[5]);
+
     fs_free(f);
     return 0;
 }

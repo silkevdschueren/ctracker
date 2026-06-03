@@ -390,9 +390,9 @@ int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
     flow->rhs[4] = 1.0 / params.beta0 - q * delta1 * ddelta1 / root;  // dH/dptau
 
     flow->rhs[1] = f->h * (root + flow->pot.As)
-        + q * (pix * flow->pot.dAx_dx / root + flow->pot.dAs_dx);  // -dH/dx
-    flow->rhs[3] = q * (pix * flow->pot.dAx_dy / root + flow->pot.dAs_dy);  // -dH/dy
-    flow->rhs[5] = 0.0;  /* -dH/dtau, H has no tau-dependence for these static fields. */
+        + q * (pix * flow->pot.dAx_dx / root + flow->pot.dAs_dx);  // dH/dx
+    flow->rhs[3] = q * (pix * flow->pot.dAx_dy / root + flow->pot.dAs_dy);  // dH/dy
+    flow->rhs[5] = 0.0;  /* dH/dtau, H has no tau-dependence for these static fields. */
 
     flow->grad[0] = -flow->rhs[1];
     flow->grad[1] =  flow->rhs[0];
@@ -401,4 +401,35 @@ int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
     flow->grad[4] = -flow->rhs[5];
     flow->grad[5] =  flow->rhs[4];
     flow->dH_ds = -q * (pix * flow->pot.dAx_ds / root + flow->pot.dAs_ds);
+}
+
+
+
+/* -- INTEGRATION -- */
+
+void ham_rhs(FSField *f, const FSHamiltonianParams *params,
+                   double s, const double z[6], double rhs[6]) {
+    FSHamiltonianFlow flow;
+    fs_hamiltonian_flow(f, params, s, z, &flow);
+    memcpy(rhs, flow.rhs, 6 * sizeof(double));
+}
+
+void fs_track_euler(FSField *f,
+                    const FSHamiltonianParams *params,
+                    double z[6],
+                    double s0,
+                    double ds,
+                    int nstep)
+{
+    double s = s0;
+
+    for (int step = 0; step < nstep; ++step) {
+        double rhs[6];
+
+        ham_rhs(f, params, s, z, rhs);
+
+        for (int i = 0; i < 6; ++i)
+            z[i] += ds * rhs[i];
+        s += ds;
+    }
 }

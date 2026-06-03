@@ -60,4 +60,10 @@ void fs_hamiltonian_params_default(FSHamiltonianParams *p, double beta0);
 int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
                         double s, const double z[6], FSHamiltonianFlow *flow);
 
+void fs_track_euler(FSField *f,
+                    const FSHamiltonianParams *params,
+                    double z[6],
+                    double s0,
+                    double ds,
+                    int nstep);
 #endif
