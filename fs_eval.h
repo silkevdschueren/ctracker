@@ -41,6 +41,9 @@ void fs_free(FSField *f);
 typedef struct {
     double beta0;
     int delta_mode;
+    int newton_max_iter;
+    double newton_tol;
+    double newton_fd_eps;
 } FSHamiltonianParams;
 
 typedef struct {
@@ -66,4 +69,29 @@ void fs_track_euler(FSField *f,
                     double s0,
                     double ds,
                     int nstep);
+
+void fs_track_rk4(FSField *f,
+                  const FSHamiltonianParams *params,
+                  double z[6],
+                  double s0,
+                  double ds,
+                  int nstep);
+                  
+void fs_step_gauss_legendre4(FSField *f,
+                            const FSHamiltonianParams *params,
+                            double s0,
+                            double ds,
+                            const double z0[6],
+                            double z1[6]);
+
+
+void fs_integrate_gauss_legendre4_array(FSField *f,
+                                       const FSHamiltonianParams *params,
+                                       double s0,
+                                       double ds,
+                                       int nstep,
+                                       int ntraj,
+                                       double *z);
+
+
 #endif

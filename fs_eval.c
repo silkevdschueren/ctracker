@@ -21,6 +21,10 @@
 #define FS_DELTA_RELATIVISTIC 0
 #define FS_DELTA_EQUALS_PTAU 1
 
+#ifndef M_SQRT3
+#define M_SQRT3 1.7320508075688772935274463415058723669
+#endif
+
 /* -- STRUCTS -- */
 
 /* Keeps recursion relation coefficients c[i,m,k] and their relevant quantities */
@@ -50,6 +54,9 @@ typedef struct {
 typedef struct {
     double beta0;
     int delta_mode;
+    int newton_max_iter;
+    double newton_tol;
+    double newton_fd_eps;
 } FSHamiltonianParams;
 
 typedef struct {
@@ -337,6 +344,9 @@ void fs_hamiltonian_params_default(FSHamiltonianParams *p, double beta0) {
     if (!p) return;
     p->beta0 = beta0;
     p->delta_mode = FS_DELTA_RELATIVISTIC;
+    p->newton_max_iter = 20;
+    p->newton_tol = 1.0e-12;
+    p->newton_fd_eps = 1.0e-7;
 }
 
 static FSHamiltonianParams fs_params_value(const FSHamiltonianParams *p) {
@@ -344,6 +354,9 @@ static FSHamiltonianParams fs_params_value(const FSHamiltonianParams *p) {
     fs_hamiltonian_params_default(&q, 1.0);
     if (p) q = *p;
     if (!(q.beta0 > 0.0)) q.beta0 = 1.0;
+    if (q.newton_max_iter <= 0) q.newton_max_iter = 20;
+    if (!(q.newton_tol > 0.0)) q.newton_tol = 1.0e-12;
+    if (!(q.newton_fd_eps > 0.0)) q.newton_fd_eps = 1.0e-7;
     return q;
 }
 
@@ -385,27 +398,23 @@ int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
     flow->root = root;
     flow->H = z[5] / params.beta0 - q * (root + flow->pot.As);
 
-    flow->rhs[0] = q * pix / root;  // dH/dpx
-    flow->rhs[2] = q * piy / root;  // dH/dpy
-    flow->rhs[4] = 1.0 / params.beta0 - q * delta1 * ddelta1 / root;  // dH/dptau
+    flow->rhs[0] = q * pix / root;  // dx/ds = dH/dpx
+    flow->rhs[2] = q * piy / root;  // dy/ds = dH/dpy
+    flow->rhs[4] = 1.0 / params.beta0 - q * delta1 * ddelta1 / root;  // dtau/ds = dH/dptau
 
     flow->rhs[1] = f->h * (root + flow->pot.As)
-        + q * (pix * flow->pot.dAx_dx / root + flow->pot.dAs_dx);  // dH/dx
-    flow->rhs[3] = q * (pix * flow->pot.dAx_dy / root + flow->pot.dAs_dy);  // dH/dy
-    flow->rhs[5] = 0.0;  /* dH/dtau, H has no tau-dependence for these static fields. */
+        + q * (pix * flow->pot.dAx_dx / root + flow->pot.dAs_dx);  // dpx/ds = -dH/dx
+    flow->rhs[3] = q * (pix * flow->pot.dAx_dy / root + flow->pot.dAs_dy);  // dpy/ds = -dH/dy
+    flow->rhs[5] = 0.0;  // tptau/ds = -dH/dtau, H has no tau-dependence for these static fields.
 
-    flow->grad[0] = -flow->rhs[1];
-    flow->grad[1] =  flow->rhs[0];
-    flow->grad[2] = -flow->rhs[3];
-    flow->grad[3] =  flow->rhs[2];
-    flow->grad[4] = -flow->rhs[5];
-    flow->grad[5] =  flow->rhs[4];
+    flow->grad[0] = -flow->rhs[1];  // dH/dx
+    flow->grad[1] =  flow->rhs[0];  // dH/dpx
+    flow->grad[2] = -flow->rhs[3];  // dH/dy
+    flow->grad[3] =  flow->rhs[2];  // dH/dpy
+    flow->grad[4] = -flow->rhs[5];  // dH/dtau
+    flow->grad[5] =  flow->rhs[4];  // dH/dptau
     flow->dH_ds = -q * (pix * flow->pot.dAx_ds / root + flow->pot.dAs_ds);
 }
-
-
-
-/* -- INTEGRATION -- */
 
 void ham_rhs(FSField *f, const FSHamiltonianParams *params,
                    double s, const double z[6], double rhs[6]) {
@@ -413,6 +422,12 @@ void ham_rhs(FSField *f, const FSHamiltonianParams *params,
     fs_hamiltonian_flow(f, params, s, z, &flow);
     memcpy(rhs, flow.rhs, 6 * sizeof(double));
 }
+
+/* -- INTEGRATION -- */
+
+// Euler
+
+
 
 void fs_track_euler(FSField *f,
                     const FSHamiltonianParams *params,
@@ -423,6 +438,12 @@ void fs_track_euler(FSField *f,
 {
     double s = s0;
 
+    // Momentum has to be continuous, vector potential discontinuous, update canonical momentum
+    FSValue v;
+    fs_eval(f, z[0], z[2], s, &v);
+    z[1] += v.Ax;
+    z[3] += v.Ay;
+
     for (int step = 0; step < nstep; ++step) {
         double rhs[6];
 
@@ -430,6 +451,178 @@ void fs_track_euler(FSField *f,
 
         for (int i = 0; i < 6; ++i)
             z[i] += ds * rhs[i];
+        s += ds;
+    }
+}
+
+// Runge-Kutta
+
+void fs_track_rk4(FSField *f,
+                  const FSHamiltonianParams *params,
+                  double z[6],
+                  double s0,
+                  double ds,
+                  int nstep)
+{
+    double s = s0;
+
+    // Momentum has to be continuous, vector potential discontinuous, update canonical momentum
+    FSValue v;
+    fs_eval(f, z[0], z[2], s, &v);
+    z[1] += v.Ax;
+    z[3] += v.Ay;
+
+    for (int step = 0; step < nstep; ++step) {
+
+        double k1[6], k2[6], k3[6], k4[6];
+        double ztmp[6];
+
+        ham_rhs(f, params, s, z, k1);
+        for (int i = 0; i < 6; ++i) ztmp[i] = z[i] + 0.5 * ds * k1[i];
+
+        ham_rhs(f, params, s + 0.5 * ds, ztmp, k2);
+        for (int i = 0; i < 6; ++i) ztmp[i] = z[i] + 0.5 * ds * k2[i];
+
+        ham_rhs(f, params, s + 0.5 * ds, ztmp, k3);
+        for (int i = 0; i < 6; ++i) ztmp[i] = z[i] + ds * k3[i];
+
+        ham_rhs(f, params, s + ds, ztmp, k4);
+        for (int i = 0; i < 6; ++i) z[i] += ds * (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) / 6.0;
+
+        s += ds;
+    }
+}
+
+// Two stage fourth order Gauss-Legendre Runge-Kutta
+
+static int gl4_residual(FSField *f, const FSHamiltonianParams *params,
+                        double s0, double ds, const double z0[6],
+                        const double K[12], double F[12]) {
+    const double c1 = 0.5 - M_SQRT3 / 6.0;
+    const double c2 = 0.5 + M_SQRT3 / 6.0;
+    const double a11 = 0.25;
+    const double a12 = 0.25 - M_SQRT3 / 6.0;
+    const double a21 = 0.25 + M_SQRT3 / 6.0;
+    const double a22 = 0.25;
+    double zstage[6], rhs[6];
+    int rc;
+
+    for (int j = 0; j < 6; ++j) zstage[j] = z0[j] + ds * (a11 * K[j] + a12 * K[6 + j]);
+    ham_rhs(f, params, s0 + c1 * ds, zstage, rhs);
+    for (int j = 0; j < 6; ++j) F[j] = K[j] - rhs[j];
+
+    for (int j = 0; j < 6; ++j) zstage[j] = z0[j] + ds * (a21 * K[j] + a22 * K[6 + j]);
+    ham_rhs(f, params, s0 + c2 * ds, zstage, rhs);
+    for (int j = 0; j < 6; ++j) F[6 + j] = K[6 + j] - rhs[j];
+}
+
+static double inf_norm(const double *x, int n) {
+    double m = 0.0;
+    for (int i = 0; i < n; ++i) {
+        const double a = fabs(x[i]);
+        if (a > m) m = a;
+    }
+    return m;
+}
+
+static int solve_linear(int n, double *A, double *b) {
+    for (int k = 0; k < n; ++k) {
+        int piv = k;
+        double pivabs = fabs(A[n * k + k]);
+        for (int r = k + 1; r < n; ++r) {
+            const double a = fabs(A[n * r + k]);
+            if (a > pivabs) {
+                pivabs = a;
+                piv = r;
+            }
+        }
+        if (piv != k) {
+            for (int c = k; c < n; ++c) {
+                const double tmp = A[n * k + c];
+                A[n * k + c] = A[n * piv + c];
+                A[n * piv + c] = tmp;
+            }
+            {
+                const double tmp = b[k];
+                b[k] = b[piv];
+                b[piv] = tmp;
+            }
+        }
+        for (int r = k + 1; r < n; ++r) {
+            const double f = A[n * r + k] / A[n * k + k];
+            A[n * r + k] = 0.0;
+            for (int c = k + 1; c < n; ++c) A[n * r + c] -= f * A[n * k + c];
+            b[r] -= f * b[k];
+        }
+    }
+    for (int i = n - 1; i >= 0; --i) {
+        double s = b[i];
+        for (int c = i + 1; c < n; ++c) s -= A[n * i + c] * b[c];
+        b[i] = s / A[n * i + i];
+    }
+}
+
+void fs_step_gauss_legendre4(FSField *f,
+                            const FSHamiltonianParams *params_in,
+                            double s0,
+                            double ds,
+                            const double z0[6],
+                            double z1[6]) {
+    FSHamiltonianParams params = fs_params_value(params_in);
+    double K[12], F[12], F2[12];
+    double rhs0[6];
+
+    ham_rhs(f, &params, s0, z0, rhs0);
+    for (int j = 0; j < 6; ++j) {
+        K[j] = rhs0[j];
+        K[6 + j] = rhs0[j];
+    }
+
+    for (int it = 0; it < params.newton_max_iter; ++it) {
+        gl4_residual(f, &params, s0, ds, z0, K, F);
+        if (inf_norm(F, 12) < params.newton_tol) break;
+
+        double J[144];
+        for (int c = 0; c < 12; ++c) {
+            const double save = K[c];
+            const double eps = params.newton_fd_eps * (1.0 + fabs(save));
+            K[c] = save + eps;
+            gl4_residual(f, &params, s0, ds, z0, K, F2);
+            K[c] = save;
+            for (int r = 0; r < 12; ++r) J[12 * r + c] = (F2[r] - F[r]) / eps;
+        }
+        for (int r = 0; r < 12; ++r) F[r] = -F[r];
+        solve_linear(12, J, F);
+        for (int c = 0; c < 12; ++c) K[c] += F[c];
+        if (inf_norm(F, 12) < params.newton_tol) break;
+        if (it == params.newton_max_iter - 1) printf("No convergence");
+    }
+
+    for (int j = 0; j < 6; ++j) z1[j] = z0[j] + ds * 0.5 * (K[j] + K[6 + j]);
+}
+
+void fs_integrate_gauss_legendre4_array(FSField *f,
+                                       const FSHamiltonianParams *params,
+                                       double s0,
+                                       double ds,
+                                       int nstep,
+                                       int ntraj,
+                                       double *z) {
+    double s = s0;
+
+    // Momentum has to be continuous, vector potential discontinuous, update canonical momentum
+    FSValue v;
+    fs_eval(f, z[0], z[2], s, &v);
+    z[1] += v.Ax;
+    z[3] += v.Ay;
+
+    for (int step = 0; step < nstep; ++step) {
+        for (int i = 0; i < ntraj; ++i) {
+            double zin[6], zout[6];
+            memcpy(zin, z + 6 * (size_t)i, 6 * sizeof(double));
+            fs_step_gauss_legendre4(f, params, s, ds, zin, zout);
+            memcpy(z + 6 * (size_t)i, zout, 6 * sizeof(double));
+        }
         s += ds;
     }
 }
