@@ -1,11 +1,11 @@
 import bpmeth
 
 
-x, y, s = 0.01, 0.1, 0.
+x, y, s = 0.01, 0.02, 0.001
 h = 0.2
-a = (0,)#("1 + 0.1*s", 0.2, 0.3)
-b = (1,)#0.5)
-bs = 0#.1
+a = ("1 + 0.1*s", 0.2, 0.3)
+b = (1,0.5)
+bs = 0.1
 
 fexp = bpmeth.FieldExpansion(a=a, b=b, h=h, bs=bs)
 phi = fexp.get_phi()
@@ -18,15 +18,15 @@ A = fexp.get_A(lambdify=True)
 print(f"A = {A[0](x, y, s), A[1](x, y, s), A[2](x, y, s)}")
 
 
-px = 0.01
-py = 0.02
-tau = 0.
-ptau = 0.03
+px = 0.005
+py = 0.007
+tau = 0.008
+ptau = 0.004
 beta0=1.
 
 
 ham = bpmeth.Hamiltonian(1, h, fexp)
-vf = ham.get_vectorfield()
+vf = ham.get_vectorfield(compile=False)
 vf_eval = vf(s, (x, y, tau, px, py, ptau), beta0)  # xdot, ydot, taudot, pxdot, pydot, ptaudot
 
 print("Hamiltonian values:")

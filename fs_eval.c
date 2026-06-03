@@ -264,9 +264,16 @@ int fs_eval(FSField *f, double x, double y, double s, FSValue *out) {
     = 1/qh sum_m c[1,m] q^(m+2)/(m+2) - 1/q sum_m c[1,m] 1/(m+2) */
     if (f->ncoef > 1) {
         for (int m = 0; m <= f->mmax; ++m) {
-            double c1 = V[1 * f->nm + (m + f->moff)];  /* c[1,m] */
-            if (c1 == 0.0) continue;
-            out->As += c1 * (QPOW(m + 2) - 1.0) / (f->h * q * (double)(m + 2));
+            int j = m + f->moff;
+            const double c1 = V[1 * f->nm + j];  /* c[1,m] */
+            const double d1 = f->D1[1 * f->nm + j];
+            const double g = QPOW(m + 1) - QPOW(-1);
+            const double den = f->h * (double)(m + 2);
+            if (c1 != 0.0) {
+                out->As += c1 * g / den;
+                out->dAs_dx += c1 * (((double)(m + 1)) * QPOW(m) + QPOW(-2)) / (double)(m + 2);
+            }
+            if (d1 != 0.0) out->dAs_ds += d1 * g / den;            
         }
     }
 
@@ -315,6 +322,9 @@ int fs_eval(FSField *f, double x, double y, double s, FSValue *out) {
         t *= y / (double)(i + 1);
     }
 
+    out->dAx_dy = -out->Bs;
+    out->dAs_dy =  out->Bx;
+
     (void)nv;
     return 0;
 #undef QPOW
@@ -338,16 +348,16 @@ static FSHamiltonianParams fs_params_value(const FSHamiltonianParams *p) {
 }
 
 static int fs_delta_from_ptau(const FSHamiltonianParams *params, double ptau,
-                              double *delta, double *gamma, double *dgamma) {
+                              double *delta, double *delta1, double *ddelta1) {
     if (params->delta_mode == FS_DELTA_EQUALS_PTAU) {
         *delta = ptau;
-        *gamma = 1.0 + ptau;
-        *dgamma = 1.0;
+        *delta1 = 1.0 + ptau;  // delta+1
+        *ddelta1 = 1.0;  // d(delta+1)/dptau
     }{
         const double r = 1.0 + 2.0 * ptau / params->beta0 + ptau * ptau;
-        *gamma = sqrt(r);
-        *delta = *gamma - 1.0;
-        *dgamma = (1.0 / params->beta0 + ptau) / (*gamma);
+        *delta1 = sqrt(r);
+        *delta = *delta1 - 1.0;
+        *ddelta1 = (1.0 / params->beta0 + ptau) / (*delta1);
     }
 }
 
@@ -355,34 +365,34 @@ static int fs_delta_from_ptau(const FSHamiltonianParams *params, double ptau,
 int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
                         double s, const double z[6], FSHamiltonianFlow *flow) {
     FSHamiltonianParams params = fs_params_value(params_in);
-    double gamma, delta, dgamma;
+    double delta1, delta, ddelta1;
     double q, pix, piy, rad, root;
 
     memset(flow, 0, sizeof(*flow));
 
     fs_eval(f, z[0], z[2], s, &flow->pot);
-    fs_delta_from_ptau(&params, z[5], &delta, &gamma, &dgamma);
+    fs_delta_from_ptau(&params, z[5], &delta, &delta1, &ddelta1);
 
     q = 1.0 + f->h * z[0];
     pix = z[1] - flow->pot.Ax;
     piy = z[3] - flow->pot.Ay;  /* A_y is zero in this gauge. */
-    rad = gamma * gamma - pix * pix - piy * piy;
+    rad = delta1 * delta1 - pix * pix - piy * piy;
     root = sqrt(rad);
 
     flow->delta = delta;
-    flow->one_plus_delta = gamma;
+    flow->one_plus_delta = delta1;
     flow->radicand = rad;
     flow->root = root;
     flow->H = z[5] / params.beta0 - q * (root + flow->pot.As);
 
-    flow->rhs[0] = q * pix / root;
-    flow->rhs[2] = q * piy / root;
-    flow->rhs[4] = 1.0 / params.beta0 - q * gamma * dgamma / root;
+    flow->rhs[0] = q * pix / root;  // dH/dpx
+    flow->rhs[2] = q * piy / root;  // dH/dpy
+    flow->rhs[4] = 1.0 / params.beta0 - q * delta1 * ddelta1 / root;  // dH/dptau
 
     flow->rhs[1] = f->h * (root + flow->pot.As)
-        + q * (pix * flow->pot.dAx_dx / root + flow->pot.dAs_dx);
-    flow->rhs[3] = q * (pix * flow->pot.dAx_dy / root + flow->pot.dAs_dy);
-    flow->rhs[5] = 0.0;  /* H has no tau-dependence for these static fields. */
+        + q * (pix * flow->pot.dAx_dx / root + flow->pot.dAs_dx);  // -dH/dx
+    flow->rhs[3] = q * (pix * flow->pot.dAx_dy / root + flow->pot.dAs_dy);  // -dH/dy
+    flow->rhs[5] = 0.0;  /* -dH/dtau, H has no tau-dependence for these static fields. */
 
     flow->grad[0] = -flow->rhs[1];
     flow->grad[1] =  flow->rhs[0];
