@@ -479,6 +479,7 @@ void fs_track_rk4(FSField *f,
 
         ham_rhs(f, params, s, z, k1);
         for (int i = 0; i < 6; ++i) ztmp[i] = z[i] + 0.5 * ds * k1[i];
+        printf("k1tau, %g, k1ptau, %g\n", k1[4], k1[5]);
 
         ham_rhs(f, params, s + 0.5 * ds, ztmp, k2);
         for (int i = 0; i < 6; ++i) ztmp[i] = z[i] + 0.5 * ds * k2[i];

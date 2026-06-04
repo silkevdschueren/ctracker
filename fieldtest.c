@@ -12,18 +12,18 @@ int main(void) {
     memset(bs, 0, sizeof(bs));
     memset(a, 0, sizeof(a));
     memset(b, 0, sizeof(b));
-    a[0 * (deg + 1) + 0] = 1.0;  /* a_1 s^0 */
-    a[0 * (deg + 1) + 1] = 0.1;  /* a_1 s^1 */
-    a[1 * (deg + 1) + 0] = 0.2;  /* a_2 s^0 */
-    a[2 * (deg + 1) + 0] = 0.3;  /* a_3 s^0 */
+    // a[0 * (deg + 1) + 0] = 1.0;  /* a_1 s^0 */
+    // a[0 * (deg + 1) + 1] = 0.1;  /* a_1 s^1 */
+    // a[1 * (deg + 1) + 0] = 0.2;  /* a_2 s^0 */
+    // a[2 * (deg + 1) + 0] = 0.3;  /* a_3 s^0 */
     b[0 * (deg + 1) + 0] = 1.0;  /* b_1 s^0 */
-    b[0 * (deg + 1) + 1] = 0.1;  /* b_1 s^1 */
-    b[1 * (deg + 1) + 0] = 0.5;  /* b_2 s^0 */
-    bs[0] = 0.1;  /* b_s s^0 BE CAREFUL, CONTRIBUTION ORDER deg NEGLECTED SINCE ORDER IS FOR a0 */
+    // b[0 * (deg + 1) + 1] = 0.1;  /* b_1 s^1 */
+    // b[1 * (deg + 1) + 0] = 0.5;  /* b_2 s^0 */
+    // bs[0] = 0.1;  /* b_s s^0 BE CAREFUL, CONTRIBUTION ORDER deg NEGLECTED SINCE ORDER IS FOR a0 */
     const double h = 0.2;
     const double s = 0;
     const double x = 0.01, y = 0.02, tau = 0.001;
-    const double px = 0.0001, py = 0.0002, ptau = 0.0003;
+    const double px = 0.0005, py = 0.0002, ptau = 0.0003;
     double z[6] = {x, px, y, py, tau, ptau};
 
     FSField *f = fs_build(h, ny, na, nb, deg, bs, a, b);
@@ -42,7 +42,7 @@ int main(void) {
 
 
     FSHamiltonianParams hp;
-    fs_hamiltonian_params_default(&hp, 1.0);
+    fs_hamiltonian_params_default(&hp, 1);
 
     FSHamiltonianFlow flow;
     fs_hamiltonian_flow(f, &hp, s, z, &flow);
@@ -56,7 +56,7 @@ int main(void) {
     printf("dH/dptau = %.15g\n", flow.grad[5]);
     
     double ds = 1e-3;
-    int nstep = 100;
+    int nstep = 1;
 
     // fs_track_euler(f, &hp, z, s, ds, nstep);
     fs_track_rk4(f, &hp, z, s, ds, nstep);
