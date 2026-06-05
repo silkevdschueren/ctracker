@@ -1,3 +1,8 @@
 cc -std=c99 -O3 fs_eval.c fieldtest.c -lm -o fieldtest
 ./fieldtest
 python bpmeth_output.py
+
+
+For development purposes:
+cc -std=c99 -O0 -g -Wall -Wextra -Wpedantic fs_eval.c fieldtest.c -lm -o fieldtest
+valgrind --leak-check=full --show-leak-kinds=all ./fieldtest
