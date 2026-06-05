@@ -248,9 +248,7 @@ int evaluate_expansion(Expansion *f, double x, double y, double s, FieldValue *o
     if (q == 0.0) return -1; /* singular chart */
 
     memset(out, 0, sizeof(*out));
-    out->Ay = 0.0;
 
-    const int nv = f->ncoef * f->nm;
     double *V = f->V;
     double *D1 = f->D1;
     double *D2 = f->D2;
@@ -261,7 +259,7 @@ int evaluate_expansion(Expansion *f, double x, double y, double s, FieldValue *o
     /* q powers from e = mmin-1 .. mmax+2 */
     Q[0] = pow(q, (double)f->qemin);
     for (int t = 1; t < f->nq; ++t) Q[t] = Q[t - 1] * q;
-#define QPOW(E) Q[(E) - f->qemin]
+    #define QPOW(E) Q[(E) - f->qemin]
 
     /* As(x,0,s) 
     = 1/(1+hx) int_0^x dx' *(1+hx) By(x',0,s) 
@@ -270,19 +268,19 @@ int evaluate_expansion(Expansion *f, double x, double y, double s, FieldValue *o
     if (f->ncoef > 1) {
         for (int m = 0; m <= f->mmax; ++m) {
             int j = m + f->moff;
-            const double c1 = V[1 * f->nm + j];  /* c[1,m] */
-            const double d1 = f->D1[1 * f->nm + j];
+            const double c1m = V[1 * f->nm + j];  /* c[1,m] */
+            const double dc1m = f->D1[1 * f->nm + j];  /* c[1,m]'*/
             const double g = QPOW(m + 1) - QPOW(-1);
             const double den = f->h * (double)(m + 2);
-            if (c1 != 0.0) {
-                out->As += c1 * g / den;
-                out->dAs_dx += c1 * (((double)(m + 1)) * QPOW(m) + QPOW(-2)) / (double)(m + 2);
+            if (c1m != 0.0) {
+                out->As += c1m * g / den;
+                out->dAs_dx += c1m * (((double)(m + 1)) * QPOW(m) + QPOW(-2)) / (double)(m + 2);
             }
-            if (d1 != 0.0) out->dAs_ds += d1 * g / den;            
+            if (dc1m != 0.0) out->dAs_ds += dc1m * g / den;            
         }
     }
 
-    double t = 1.0; /* y^i / i! */
+    double yi = 1.0; /* y^i / i! */
     for (int i = 0; i <= f->ny; ++i) {
         double sphi = 0.0, gx = 0.0, gs = 0.0, gy = 0.0;
         double dgx_dx = 0.0, dgx_ds = 0.0;
@@ -290,49 +288,49 @@ int evaluate_expansion(Expansion *f, double x, double y, double s, FieldValue *o
 
         for (int m = f->mmin; m <= f->mmax; ++m) {
             const int j = m + f->moff;
-            const double v = V[i * f->nm + j];      /* c[i,m]' */
-            const double d1 = D1[i * f->nm + j];    /* c[i,m] */
-            const double d2 = D2[i * f->nm + j];    /* c[i,m] */
-            const double qm = QPOW(m);              /* q^m */
-            const double qm1 = QPOW(m - 1);         /* q^(m-1) */
-            const double qm2 = QPOW(m - 2);         /* q^(m-2) */
+            const double cim = V[i * f->nm + j];         /* c[i,m] */
+            const double ci1m = V[(i + 1) * f->nm + j];  /* c[i+1,m] */
+            const double dcim = D1[i * f->nm + j];       /* c[i,m]' */
+            const double ddcim = D2[i * f->nm + j];      /* c[i,m]'' */
+            const double qm = QPOW(m);                   /* q^m */
+            const double qm1 = QPOW(m - 1);              /* q^(m-1) */
+            const double qm2 = QPOW(m - 2);              /* q^(m-2) */
 
-            sphi += v * qm;                         /* c[i,m] q^m */
-            gx   += f->h * (double)m * v * qm1;     /* h m c[i,m] q^(m-1) */
-            gy   += V[(i + 1) * f->nm + j] * qm;    /* c[i+1,m] q^m */
-            gs   += d1 * qm1;                       /* c[i,m]' q^(m-1) */
+            sphi += cim * qm;                            /* c[i,m] q^m */
+            gx   += f->h * (double)m * cim * qm1;        /* h m c[i,m] q^(m-1) */
+            gy   += ci1m * qm;         /* c[i+1,m] q^m */
+            gs   += dcim * qm1;                          /* c[i,m]' q^(m-1) */
 
-            dgx_dx += f->h * f->h * (double)m * (double)(m-1) * v * qm2;
-            dgx_ds += f->h * (double)m * d1 * qm1;
-            dgs_dx += f->h * (double)(m-1) * d1 * qm2;
-            dgs_ds += d2 * qm1;
+            dgx_dx += f->h * f->h * (double)m * (double)(m-1) * cim * qm2;
+            dgx_ds += f->h * (double)m * dcim * qm1;
+            dgs_dx += f->h * (double)(m-1) * dcim * qm2;
+            dgs_ds += ddcim * qm1;
         }
 
-        out->phi += sphi * t;  /* c[i,m] q^m y^i/i!*/
-        out->Bx  -= gx   * t;  /* -h m c[i,m] q^(m-1) y^i/i! */
-        out->By  -= gy   * t;  /* -c[i+1,m] q^m y^i/i! */
-        out->Bs  -= gs   * t;  /* -c[i,m]' q^(m-1) y^i/i! */
+        out->phi += sphi * yi;  /* c[i,m] q^m y^i/i!*/
+        out->Bx  -= gx   * yi;  /* -h m c[i,m] q^(m-1) y^i/i! */
+        out->By  -= gy   * yi;  /* -c[i+1,m] q^m y^i/i! */
+        out->Bs  -= gs   * yi;  /* -c[i,m]' q^(m-1) y^i/i! */
 
         /* A_x, A_s through order ny in y: need i = 0..ny-1 */
         if (i < f->ny) {
-            double u = t * y / (double)(i + 1);  /* y^(i+1)/(i+1)! */
-            out->Ax += gs * u;  /* -c[i,m]' q^(m-1) y^(i+1)/(i+1)! */
-            out->As -= gx * u;  /* -h m c[i,m] q^(m-1) y^i/i! *//* -h m c[i,m] q^(m-1) y^i/i! */
-            out->dAx_dx += dgs_dx  * u;
-            out->dAx_ds += dgs_ds  * u;
-            out->dAs_dx += -dgx_dx * u;
-            out->dAs_ds += -dgx_ds * u;
+            double yi1 = yi * y / (double)(i + 1);  /* y^(i+1)/(i+1)! */
+            out->Ax += gs * yi1;  /* -c[i,m]' q^(m-1) y^(i+1)/(i+1)! */
+            out->As -= gx * yi1;  /* -h m c[i,m] q^(m-1) y^i/i! *//* -h m c[i,m] q^(m-1) y^i/i! */
+            out->dAx_dx += dgs_dx  * yi1;
+            out->dAx_ds += dgs_ds  * yi1;
+            out->dAs_dx += -dgx_dx * yi1;
+            out->dAs_ds += -dgx_ds * yi1;
         }
 
-        t *= y / (double)(i + 1);
+        yi *= y / (double)(i + 1);
     }
 
     out->dAx_dy = -out->Bs;
     out->dAs_dy =  out->Bx;
 
-    (void)nv;
     return 0;
-#undef QPOW
+    #undef QPOW
 }
 
 
@@ -347,7 +345,7 @@ void hamiltonian_params_default(HamiltonianParams *p, double beta0) {
     p->newton_fd_eps = 1.0e-7;
 }
 
-static int delta_from_ptau(const HamiltonianParams *params, double ptau,
+void delta_from_ptau(const HamiltonianParams *params, double ptau,
                               double *delta, double *delta1, double *ddelta1) {
     if (params->delta_mode == DELTA_EQUALS_PTAU) {
         *delta = ptau;
@@ -363,7 +361,7 @@ static int delta_from_ptau(const HamiltonianParams *params, double ptau,
 }
 
 
-int hamiltonian_flow(Expansion *f, const HamiltonianParams *params,
+void hamiltonian_flow(Expansion *f, const HamiltonianParams *params,
                         double s, const double z[6], HamiltonianFlow *flow) {
     double delta1, delta, ddelta1;
     double q, pix, piy, rad, root;
@@ -408,11 +406,11 @@ int hamiltonian_flow(Expansion *f, const HamiltonianParams *params,
 // Euler
 
 void track_euler(Expansion *f,
-                    const HamiltonianParams *params,
-                    double z[6],
-                    double s0,
-                    double ds,
-                    int nstep)
+                 const HamiltonianParams *params,
+                 double z[6],
+                 double s0,
+                 double ds,
+                 int nstep)
 {
     double s = s0;
 
@@ -423,9 +421,7 @@ void track_euler(Expansion *f,
     z[3] += v.Ay;
 
     HamiltonianFlow flow;
-    for (int step = 0; step < nstep; ++step) {
-        double rhs[6];
-        
+    for (int step = 0; step < nstep; ++step) {       
         hamiltonian_flow(f, params, s, z, &flow);
 
         for (int i = 0; i < 6; ++i)
@@ -437,11 +433,11 @@ void track_euler(Expansion *f,
 // Runge-Kutta
 
 void track_rk4(Expansion *f,
-                  const HamiltonianParams *params,
-                  double z[6],
-                  double s0,
-                  double ds,
-                  int nstep)
+               const HamiltonianParams *params,
+               double z[6],
+               double s0,
+               double ds,
+               int nstep)
 {
     double s = s0;
 
@@ -479,9 +475,9 @@ void track_rk4(Expansion *f,
 
 // Two stage fourth order Gauss-Legendre Runge-Kutta
 
-static int gl4_residual(Expansion *f, const HamiltonianParams *params,
-                        double s0, double ds, const double z0[6],
-                        const double K[12], double F[12]) {
+void gl4_residual(Expansion *f, const HamiltonianParams *params,
+                  double s0, double ds, const double z0[6],
+                  const double K[12], double F[12]) {
     const double c1 = 0.5 - M_SQRT3 / 6.0;
     const double c2 = 0.5 + M_SQRT3 / 6.0;
     const double a11 = 0.25;
@@ -509,7 +505,7 @@ static double inf_norm(const double *x, int n) {
     return m;
 }
 
-static int solve_linear(int n, double *A, double *b) {
+void solve_linear(int n, double *A, double *b) {
     for (int k = 0; k < n; ++k) {
         int piv = k;
         double pivabs = fabs(A[n * k + k]);
@@ -547,11 +543,11 @@ static int solve_linear(int n, double *A, double *b) {
 }
 
 void step_gauss_legendre4(Expansion *f,
-                            const HamiltonianParams *params,
-                            double s0,
-                            double ds,
-                            const double z0[6],
-                            double z1[6]) {
+                          const HamiltonianParams *params,
+                          double s0,
+                          double ds,
+                          const double z0[6],
+                          double z1[6]) {
     double K[12], F[12], F2[12];
     HamiltonianFlow flow;
 
@@ -585,12 +581,12 @@ void step_gauss_legendre4(Expansion *f,
 }
 
 void integrate_gauss_legendre4_array(Expansion *f,
-                                       const HamiltonianParams *params,
-                                       double s0,
-                                       double ds,
-                                       int nstep,
-                                       int ntraj,
-                                       double *z) {
+                                     const HamiltonianParams *params,
+                                     double s0,
+                                     double ds,
+                                     int nstep,
+                                     int ntraj,
+                                     double *z) {
     double s = s0;
 
     // Momentum has to be continuous, vector potential discontinuous, update canonical momentum

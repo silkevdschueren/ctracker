@@ -60,7 +60,7 @@ typedef struct {
 
 void hamiltonian_params_default(HamiltonianParams *p, double beta0);
 
-int hamiltonian_flow(Expansion *f, const HamiltonianParams *params_in,
+void hamiltonian_flow(Expansion *f, const HamiltonianParams *params_in,
                         double s, const double z[6], HamiltonianFlow *flow);
 
 void track_euler(Expansion *f,
