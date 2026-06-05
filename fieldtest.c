@@ -32,7 +32,7 @@ int main(void) {
     FieldValue v;
     if (evaluate_expansion(f, x, y, s, &v) != 0) {
         fprintf(stderr, "q=1+h x hit the chart singularity\n");
-        fs_free(f);
+        free_expansion(f);
         return 1;
     }
 
@@ -71,6 +71,6 @@ int main(void) {
     printf("ptau = %.15e\n", z[5]);
 
 
-    fs_free(f);
+    free_expansion(f);
     return 0;
 }

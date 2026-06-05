@@ -152,8 +152,8 @@ Expansion *build_expansion(double h, int ny, int na, int nb, int deg,
     f->Q = (double *)xcalloc((size_t)f->nq, sizeof(double));
 
     int nmax = (na > nb) ? na : nb;
-    double *invfact = (double *)xcalloc((size_t)nmax + 1, sizeof(double));  /* 1/n! */
-    double *invhpow = (double *)xcalloc((size_t)nmax + 1, sizeof(double));  /* 1/h^n*/
+    double invfact[nmax + 1];
+    double invhpow[nmax + 1];
     invfact[0] = 1.0;
     invhpow[0] = 1.0;
     for (int n = 1; n <= nmax; ++n) {
@@ -212,12 +212,10 @@ Expansion *build_expansion(double h, int ny, int na, int nb, int deg,
         }
     }
 
-    free(invfact);
-    free(invhpow);
     return f;
 }
 
-void fs_free(Expansion *f) {
+void free_expansion(Expansion *f) {
     if (!f) return;
     free(f->c);
     free(f->V);

@@ -35,7 +35,7 @@ Expansion *build_expansion(double h, int ny, int na, int nb, int deg,
 
 int evaluate_expansion(Expansion *f, double x, double y, double s, FieldValue *out);
 
-void fs_free(Expansion *f);
+void free_expansion(Expansion *f);
 
 
 typedef struct {
