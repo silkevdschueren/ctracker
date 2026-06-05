@@ -1,5 +1,5 @@
-#ifndef FS_EVAL_H
-#define FS_EVAL_H
+#ifndef fs_eval_H
+#define fs_eval_H
 
 #include <stddef.h>  /* for size_t if needed */
 
@@ -16,7 +16,7 @@ typedef struct {
     double *D1;
     double *D2;
     double *Q;
-} FSField;
+} Expansion;
 
 /* output struct */
 typedef struct {
@@ -25,17 +25,17 @@ typedef struct {
     double Ax, Ay, As;
     double dAx_dx, dAx_dy, dAx_ds;
     double dAs_dx, dAs_dy, dAs_ds;
-} FSValue;
+} FieldValue;
 
 /* API */
-FSField *fs_build(double h, int ny, int na, int nb, int deg, 
+Expansion *build_expansion(double h, int ny, int na, int nb, int deg, 
                   const double *bs,
                   const double *a, 
                   const double *b);
 
-int fs_eval(FSField *f, double x, double y, double s, FSValue *out);
+int evaluate_expansion(Expansion *f, double x, double y, double s, FieldValue *out);
 
-void fs_free(FSField *f);
+void fs_free(Expansion *f);
 
 
 typedef struct {
@@ -44,7 +44,7 @@ typedef struct {
     int newton_max_iter;
     double newton_tol;
     double newton_fd_eps;
-} FSHamiltonianParams;
+} HamiltonianParams;
 
 typedef struct {
     double H;
@@ -55,38 +55,38 @@ typedef struct {
     double grad[6];  /* dH/d{x,px,y,py,tau,ptau} */
     double rhs[6];   /* canonical flow dz/ds */
     double dH_ds;    /* explicit derivative at fixed canonical variables */
-    FSValue pot;
-} FSHamiltonianFlow;
+    FieldValue pot;
+} HamiltonianFlow;
 
-void fs_hamiltonian_params_default(FSHamiltonianParams *p, double beta0);
+void hamiltonian_params_default(HamiltonianParams *p, double beta0);
 
-int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
-                        double s, const double z[6], FSHamiltonianFlow *flow);
+int hamiltonian_flow(Expansion *f, const HamiltonianParams *params_in,
+                        double s, const double z[6], HamiltonianFlow *flow);
 
-void fs_track_euler(FSField *f,
-                    const FSHamiltonianParams *params,
+void track_euler(Expansion *f,
+                    const HamiltonianParams *params,
                     double z[6],
                     double s0,
                     double ds,
                     int nstep);
 
-void fs_track_rk4(FSField *f,
-                  const FSHamiltonianParams *params,
+void track_rk4(Expansion *f,
+                  const HamiltonianParams *params,
                   double z[6],
                   double s0,
                   double ds,
                   int nstep);
                   
-void fs_step_gauss_legendre4(FSField *f,
-                            const FSHamiltonianParams *params,
+void step_gauss_legendre4(Expansion *f,
+                            const HamiltonianParams *params,
                             double s0,
                             double ds,
                             const double z0[6],
                             double z1[6]);
 
 
-void fs_integrate_gauss_legendre4_array(FSField *f,
-                                       const FSHamiltonianParams *params,
+void integrate_gauss_legendre4_array(Expansion *f,
+                                       const HamiltonianParams *params,
                                        double s0,
                                        double ds,
                                        int nstep,

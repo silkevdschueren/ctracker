@@ -18,8 +18,8 @@
   order ny in y, with B_y also accurate through order ny.
 */
 
-#define FS_DELTA_RELATIVISTIC 0
-#define FS_DELTA_EQUALS_PTAU 1
+#define DELTA_RELATIVISTIC 0
+#define DELTA_EQUALS_PTAU 1
 
 #ifndef M_SQRT3
 #define M_SQRT3 1.7320508075688772935274463415058723669
@@ -40,7 +40,7 @@ typedef struct {
     double *D1;   /* scratch: d_s c[i,m]  */
     double *D2;   /* scratch: d2_s c[i,m]  */
     double *Q;   /* scratch: q^e, e=qemin.. */
-} FSField;
+} Expansion;
 
 /* Keeps value of the scalar potential, field, vector potential at given position */
 typedef struct {
@@ -49,7 +49,7 @@ typedef struct {
     double Ax, Ay, As;
     double dAx_dx, dAx_dy, dAx_ds;
     double dAs_dx, dAs_dy, dAs_ds;
-} FSValue;
+} FieldValue;
 
 typedef struct {
     double beta0;
@@ -57,7 +57,7 @@ typedef struct {
     int newton_max_iter;
     double newton_tol;
     double newton_fd_eps;
-} FSHamiltonianParams;
+} HamiltonianParams;
 
 typedef struct {
     double H;
@@ -68,8 +68,8 @@ typedef struct {
     double grad[6];  /* dH/d{x,px,y,py,tau,ptau} */
     double rhs[6];   /* canonical flow dz/ds */
     double dH_ds;    /* explicit derivative at fixed canonical variables */
-    FSValue pot;
-} FSHamiltonianFlow;
+    FieldValue pot;
+} HamiltonianFlow;
 
 
 /* -- HELPER FUNCTIONS -- */
@@ -83,16 +83,16 @@ static void *xcalloc(size_t n, size_t sz) {
     return p;
 }
 
-static inline size_t coff(const FSField *f, int i, int j, int k) {
+static inline size_t coff(const Expansion *f, int i, int j, int k) {
     return (((size_t)i * (size_t)f->nm + (size_t)j) * (size_t)(f->deg + 1) + (size_t)k);
 }
 
 /* pointer to coefficient */
-static inline double *cptr(FSField *f, int i, int j) {
+static inline double *cptr(Expansion *f, int i, int j) {
     return f->c + (((size_t)i * (size_t)f->nm + (size_t)j) * (size_t)(f->deg + 1));
 }
 
-static inline const double *ccptr(const FSField *f, int i, int j) {
+static inline const double *ccptr(const Expansion *f, int i, int j) {
     return f->c + (((size_t)i * (size_t)f->nm + (size_t)j) * (size_t)(f->deg + 1));
 }
 
@@ -117,22 +117,22 @@ static inline void poly_eval_d2(const double *p, int deg, double s, double *v, d
 
 /* -- FIELD EXPANSION EVALUATION -- */
 
-/* Will return a pointer to an FSField struct 
+/* Will return a pointer to an Expansion struct 
 :double h: curvature
 :int ny: max power in y to keep
 :int na, nb: number of a, b coefficients
 :int deg: degree of the polynomials describing a, b
 :const double *a, *b: pointers to the first element of a, b polynomial coefficients */
-FSField *fs_build(double h, int ny, int na, int nb, int deg,
+Expansion *build_expansion(double h, int ny, int na, int nb, int deg,
                   const double *bs,
                   const double *a, 
                   const double *b) {
     if (h == 0.0) {
-        fprintf(stderr, "fs_build: h=0 needs the Cartesian limit; this evaluator assumes h != 0.\n");
+        fprintf(stderr, "build_expansion: h=0 needs the Cartesian limit; this evaluator assumes h != 0.\n");
         return NULL;
     }
 
-    FSField *f = (FSField *)xcalloc(1, sizeof(*f));
+    Expansion *f = (Expansion *)xcalloc(1, sizeof(*f));
     f->h = h;
     f->ny = ny;
     f->ncoef = ny + 2;      /* store phi_0..phi_{ny+1} so By is also order ny */
@@ -217,7 +217,7 @@ FSField *fs_build(double h, int ny, int na, int nb, int deg,
     return f;
 }
 
-void fs_free(FSField *f) {
+void fs_free(Expansion *f) {
     if (!f) return;
     free(f->c);
     free(f->V);
@@ -229,7 +229,7 @@ void fs_free(FSField *f) {
 
 /* Evaluate all c[i,m](s) and d_s c[i,m](s)
 and keep them in V, D */
-static void fs_prepare_s(FSField *f, double s) {
+static void fs_prepare_s(Expansion *f, double s) {
     for (int i = 0; i < f->ncoef; ++i) {
         for (int j = 0; j < f->nm; ++j) {
             poly_eval_d2(ccptr(f, i, j), f->deg, s,
@@ -241,11 +241,11 @@ static void fs_prepare_s(FSField *f, double s) {
 }
 
 /* Evaluate fields
-:FSField *f: pointer to field to evaluate
+:Expansion *f: pointer to field to evaluate
 :double x, y, s: positions at which to evaluate field
-:FSValue *out: pointer to object where to keep evaluation, 
+:FieldValue *out: pointer to object where to keep evaluation, 
 keeping scalar potential, vector potential, fields */
-int fs_eval(FSField *f, double x, double y, double s, FSValue *out) {
+int evaluate_expansion(Expansion *f, double x, double y, double s, FieldValue *out) {
     const double q = 1.0 + f->h * x;
     if (q == 0.0) return -1; /* singular chart */
 
@@ -340,33 +340,23 @@ int fs_eval(FSField *f, double x, double y, double s, FSValue *out) {
 
 /* -- HAMILTONIAN -- */
 
-void fs_hamiltonian_params_default(FSHamiltonianParams *p, double beta0) {
+void hamiltonian_params_default(HamiltonianParams *p, double beta0) {
     if (!p) return;
     p->beta0 = beta0;
-    p->delta_mode = FS_DELTA_RELATIVISTIC;
+    p->delta_mode = DELTA_RELATIVISTIC;
     p->newton_max_iter = 20;
     p->newton_tol = 1.0e-12;
     p->newton_fd_eps = 1.0e-7;
 }
 
-static FSHamiltonianParams fs_params_value(const FSHamiltonianParams *p) {
-    FSHamiltonianParams q;
-    fs_hamiltonian_params_default(&q, 1.0);
-    if (p) q = *p;
-    if (!(q.beta0 > 0.0)) q.beta0 = 1.0;
-    if (q.newton_max_iter <= 0) q.newton_max_iter = 20;
-    if (!(q.newton_tol > 0.0)) q.newton_tol = 1.0e-12;
-    if (!(q.newton_fd_eps > 0.0)) q.newton_fd_eps = 1.0e-7;
-    return q;
-}
-
-static int fs_delta_from_ptau(const FSHamiltonianParams *params, double ptau,
+static int delta_from_ptau(const HamiltonianParams *params, double ptau,
                               double *delta, double *delta1, double *ddelta1) {
-    if (params->delta_mode == FS_DELTA_EQUALS_PTAU) {
+    if (params->delta_mode == DELTA_EQUALS_PTAU) {
         *delta = ptau;
         *delta1 = 1.0 + ptau;  // delta+1
         *ddelta1 = 1.0;  // d(delta+1)/dptau
-    }{
+    }
+    else {
         const double r = 1.0 + 2.0 * ptau / params->beta0 + ptau * ptau;
         *delta1 = sqrt(r);
         *delta = *delta1 - 1.0;
@@ -375,16 +365,15 @@ static int fs_delta_from_ptau(const FSHamiltonianParams *params, double ptau,
 }
 
 
-int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
-                        double s, const double z[6], FSHamiltonianFlow *flow) {
-    FSHamiltonianParams params = fs_params_value(params_in);
+int hamiltonian_flow(Expansion *f, const HamiltonianParams *params,
+                        double s, const double z[6], HamiltonianFlow *flow) {
     double delta1, delta, ddelta1;
     double q, pix, piy, rad, root;
 
     memset(flow, 0, sizeof(*flow));
 
-    fs_eval(f, z[0], z[2], s, &flow->pot);
-    fs_delta_from_ptau(&params, z[5], &delta, &delta1, &ddelta1);
+    evaluate_expansion(f, z[0], z[2], s, &flow->pot);
+    delta_from_ptau(params, z[5], &delta, &delta1, &ddelta1);
 
     q = 1.0 + f->h * z[0];
     pix = z[1] - flow->pot.Ax;
@@ -396,11 +385,11 @@ int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
     flow->one_plus_delta = delta1;
     flow->radicand = rad;
     flow->root = root;
-    flow->H = z[5] / params.beta0 - q * (root + flow->pot.As);
+    flow->H = z[5] / params->beta0 - q * (root + flow->pot.As);
 
     flow->rhs[0] = q * pix / root;  // dx/ds = dH/dpx
     flow->rhs[2] = q * piy / root;  // dy/ds = dH/dpy
-    flow->rhs[4] = 1.0 / params.beta0 - q * delta1 * ddelta1 / root;  // dtau/ds = dH/dptau
+    flow->rhs[4] = 1.0 / params->beta0 - q * delta1 * ddelta1 / root;  // dtau/ds = dH/dptau
 
     flow->rhs[1] = f->h * (root + flow->pot.As)
         + q * (pix * flow->pot.dAx_dx / root + flow->pot.dAs_dx);  // dpx/ds = -dH/dx
@@ -416,21 +405,12 @@ int fs_hamiltonian_flow(FSField *f, const FSHamiltonianParams *params_in,
     flow->dH_ds = -q * (pix * flow->pot.dAx_ds / root + flow->pot.dAs_ds);
 }
 
-void ham_rhs(FSField *f, const FSHamiltonianParams *params,
-                   double s, const double z[6], double rhs[6]) {
-    FSHamiltonianFlow flow;
-    fs_hamiltonian_flow(f, params, s, z, &flow);
-    memcpy(rhs, flow.rhs, 6 * sizeof(double));
-}
-
 /* -- INTEGRATION -- */
 
 // Euler
 
-
-
-void fs_track_euler(FSField *f,
-                    const FSHamiltonianParams *params,
+void track_euler(Expansion *f,
+                    const HamiltonianParams *params,
                     double z[6],
                     double s0,
                     double ds,
@@ -439,26 +419,27 @@ void fs_track_euler(FSField *f,
     double s = s0;
 
     // Momentum has to be continuous, vector potential discontinuous, update canonical momentum
-    FSValue v;
-    fs_eval(f, z[0], z[2], s, &v);
+    FieldValue v;
+    evaluate_expansion(f, z[0], z[2], s, &v);
     z[1] += v.Ax;
     z[3] += v.Ay;
 
+    HamiltonianFlow flow;
     for (int step = 0; step < nstep; ++step) {
         double rhs[6];
-
-        ham_rhs(f, params, s, z, rhs);
+        
+        hamiltonian_flow(f, params, s, z, &flow);
 
         for (int i = 0; i < 6; ++i)
-            z[i] += ds * rhs[i];
+            z[i] += ds * flow.rhs[i];
         s += ds;
     }
 }
 
 // Runge-Kutta
 
-void fs_track_rk4(FSField *f,
-                  const FSHamiltonianParams *params,
+void track_rk4(Expansion *f,
+                  const HamiltonianParams *params,
                   double z[6],
                   double s0,
                   double ds,
@@ -467,27 +448,31 @@ void fs_track_rk4(FSField *f,
     double s = s0;
 
     // Momentum has to be continuous, vector potential discontinuous, update canonical momentum
-    FSValue v;
-    fs_eval(f, z[0], z[2], s, &v);
+    FieldValue v;
+    evaluate_expansion(f, z[0], z[2], s, &v);
     z[1] += v.Ax;
     z[3] += v.Ay;
 
+    HamiltonianFlow flow;
     for (int step = 0; step < nstep; ++step) {
 
         double k1[6], k2[6], k3[6], k4[6];
         double ztmp[6];
 
-        ham_rhs(f, params, s, z, k1);
+        hamiltonian_flow(f, params, s, z, &flow);
+        memcpy(k1, flow.rhs, sizeof(k1));
         for (int i = 0; i < 6; ++i) ztmp[i] = z[i] + 0.5 * ds * k1[i];
-        printf("k1tau, %g, k1ptau, %g\n", k1[4], k1[5]);
 
-        ham_rhs(f, params, s + 0.5 * ds, ztmp, k2);
+        hamiltonian_flow(f, params, s + 0.5 * ds, ztmp, &flow);
+        memcpy(k2, flow.rhs, sizeof(k2));
         for (int i = 0; i < 6; ++i) ztmp[i] = z[i] + 0.5 * ds * k2[i];
 
-        ham_rhs(f, params, s + 0.5 * ds, ztmp, k3);
+        hamiltonian_flow(f, params, s + 0.5 * ds, ztmp, &flow);
+        memcpy(k3, flow.rhs, sizeof(k3));
         for (int i = 0; i < 6; ++i) ztmp[i] = z[i] + ds * k3[i];
 
-        ham_rhs(f, params, s + ds, ztmp, k4);
+        hamiltonian_flow(f, params, s + ds, ztmp, &flow);
+        memcpy(k4, flow.rhs, sizeof(k4));
         for (int i = 0; i < 6; ++i) z[i] += ds * (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) / 6.0;
 
         s += ds;
@@ -496,7 +481,7 @@ void fs_track_rk4(FSField *f,
 
 // Two stage fourth order Gauss-Legendre Runge-Kutta
 
-static int gl4_residual(FSField *f, const FSHamiltonianParams *params,
+static int gl4_residual(Expansion *f, const HamiltonianParams *params,
                         double s0, double ds, const double z0[6],
                         const double K[12], double F[12]) {
     const double c1 = 0.5 - M_SQRT3 / 6.0;
@@ -505,16 +490,16 @@ static int gl4_residual(FSField *f, const FSHamiltonianParams *params,
     const double a12 = 0.25 - M_SQRT3 / 6.0;
     const double a21 = 0.25 + M_SQRT3 / 6.0;
     const double a22 = 0.25;
-    double zstage[6], rhs[6];
-    int rc;
+    double zstage[6];
+    HamiltonianFlow flow;
 
     for (int j = 0; j < 6; ++j) zstage[j] = z0[j] + ds * (a11 * K[j] + a12 * K[6 + j]);
-    ham_rhs(f, params, s0 + c1 * ds, zstage, rhs);
-    for (int j = 0; j < 6; ++j) F[j] = K[j] - rhs[j];
+    hamiltonian_flow(f, params, s0 + c1 * ds, zstage, &flow);
+    for (int j = 0; j < 6; ++j) F[j] = K[j] - flow.rhs[j];
 
     for (int j = 0; j < 6; ++j) zstage[j] = z0[j] + ds * (a21 * K[j] + a22 * K[6 + j]);
-    ham_rhs(f, params, s0 + c2 * ds, zstage, rhs);
-    for (int j = 0; j < 6; ++j) F[6 + j] = K[6 + j] - rhs[j];
+    hamiltonian_flow(f, params, s0 + c2 * ds, zstage, &flow);
+    for (int j = 0; j < 6; ++j) F[6 + j] = K[6 + j] - flow.rhs[j];
 }
 
 static double inf_norm(const double *x, int n) {
@@ -563,47 +548,46 @@ static int solve_linear(int n, double *A, double *b) {
     }
 }
 
-void fs_step_gauss_legendre4(FSField *f,
-                            const FSHamiltonianParams *params_in,
+void step_gauss_legendre4(Expansion *f,
+                            const HamiltonianParams *params,
                             double s0,
                             double ds,
                             const double z0[6],
                             double z1[6]) {
-    FSHamiltonianParams params = fs_params_value(params_in);
     double K[12], F[12], F2[12];
-    double rhs0[6];
+    HamiltonianFlow flow;
 
-    ham_rhs(f, &params, s0, z0, rhs0);
+    hamiltonian_flow(f, params, s0, z0, &flow);
     for (int j = 0; j < 6; ++j) {
-        K[j] = rhs0[j];
-        K[6 + j] = rhs0[j];
+        K[j] = flow.rhs[j];
+        K[6 + j] = flow.rhs[j];
     }
 
-    for (int it = 0; it < params.newton_max_iter; ++it) {
-        gl4_residual(f, &params, s0, ds, z0, K, F);
-        if (inf_norm(F, 12) < params.newton_tol) break;
+    for (int it = 0; it < params->newton_max_iter; ++it) {
+        gl4_residual(f, params, s0, ds, z0, K, F);
+        if (inf_norm(F, 12) < params->newton_tol) break;
 
         double J[144];
         for (int c = 0; c < 12; ++c) {
             const double save = K[c];
-            const double eps = params.newton_fd_eps * (1.0 + fabs(save));
+            const double eps = params->newton_fd_eps * (1.0 + fabs(save));
             K[c] = save + eps;
-            gl4_residual(f, &params, s0, ds, z0, K, F2);
+            gl4_residual(f, params, s0, ds, z0, K, F2);
             K[c] = save;
             for (int r = 0; r < 12; ++r) J[12 * r + c] = (F2[r] - F[r]) / eps;
         }
         for (int r = 0; r < 12; ++r) F[r] = -F[r];
         solve_linear(12, J, F);
         for (int c = 0; c < 12; ++c) K[c] += F[c];
-        if (inf_norm(F, 12) < params.newton_tol) break;
-        if (it == params.newton_max_iter - 1) printf("No convergence");
+        if (inf_norm(F, 12) < params->newton_tol) break;
+        if (it == params->newton_max_iter - 1) printf("No convergence");
     }
 
     for (int j = 0; j < 6; ++j) z1[j] = z0[j] + ds * 0.5 * (K[j] + K[6 + j]);
 }
 
-void fs_integrate_gauss_legendre4_array(FSField *f,
-                                       const FSHamiltonianParams *params,
+void integrate_gauss_legendre4_array(Expansion *f,
+                                       const HamiltonianParams *params,
                                        double s0,
                                        double ds,
                                        int nstep,
@@ -612,8 +596,8 @@ void fs_integrate_gauss_legendre4_array(FSField *f,
     double s = s0;
 
     // Momentum has to be continuous, vector potential discontinuous, update canonical momentum
-    FSValue v;
-    fs_eval(f, z[0], z[2], s, &v);
+    FieldValue v;
+    evaluate_expansion(f, z[0], z[2], s, &v);
     z[1] += v.Ax;
     z[3] += v.Ay;
 
@@ -621,7 +605,7 @@ void fs_integrate_gauss_legendre4_array(FSField *f,
         for (int i = 0; i < ntraj; ++i) {
             double zin[6], zout[6];
             memcpy(zin, z + 6 * (size_t)i, 6 * sizeof(double));
-            fs_step_gauss_legendre4(f, params, s, ds, zin, zout);
+            step_gauss_legendre4(f, params, s, ds, zin, zout);
             memcpy(z + 6 * (size_t)i, zout, 6 * sizeof(double));
         }
         s += ds;
